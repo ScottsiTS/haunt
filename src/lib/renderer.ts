@@ -63,7 +63,7 @@ export function drawGhost(
   }
 
   // Determine body color
-  let bodyColor = COLORS.ghostDefault
+  let bodyColor: string = COLORS.ghostDefault
   if (sprite.state === 'sleeping') bodyColor = COLORS.ghostSleeping
   if (sprite.state === 'distressed') bodyColor = COLORS.ghostDistressed
   if (sprite.state === 'active') bodyColor = mixColor(COLORS.ghostDefault, COLORS.ghostGlow, sprite.glowIntensity)
