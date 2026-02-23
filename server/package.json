@@ -1,0 +1,15 @@
+{
+  "name": "haunt-ghost-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "npx tsx bridge.ts"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "tsx": "^4.19.0"
+  }
+}
