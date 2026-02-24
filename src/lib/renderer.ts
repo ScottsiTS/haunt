@@ -1,6 +1,7 @@
-import { SPRITE_SCALE, BOB_AMPLITUDE, COLORS, ROOM_WIDTH, ROOM_HEIGHT, ROOM_PADDING, ROOMS_PER_ROW, FOG_CLOUD_COUNT, FOG_SPEED, FOG_OPACITY, DUST_MOTE_COUNT, DUST_OPACITY_MIN, DUST_OPACITY_MAX, FLICKER_SPEED, FLICKER_AMOUNT, TOMBSTONE_COLORS } from './constants'
-import { getGhostFrame, TOMBSTONE_SPRITE, COBWEB_SPRITE } from './sprites'
-import type { GhostSprite } from './types'
+import { SPRITE_SCALE, BOB_AMPLITUDE, COLORS, TILE_RENDERED, FOG_SPEED, FOG_OPACITY, DUST_MOTE_COUNT, DUST_OPACITY_MIN, DUST_OPACITY_MAX, FLICKER_SPEED, FLICKER_AMOUNT } from './constants'
+import { getGhostFrame, drawTile } from './sprites'
+import type { GhostSprite, MansionMap } from './types'
+import { TileType } from './types'
 
 export function spriteColorMap(value: number, bodyColor: string): string {
   switch (value) {
@@ -11,17 +12,6 @@ export function spriteColorMap(value: number, bodyColor: string): string {
     case 4: return '#636e72'
     case 5: return lightenColor(bodyColor, 0.3)
     default: return bodyColor
-  }
-}
-
-function tombstoneColorMap(value: number): string {
-  switch (value) {
-    case 0: return 'transparent'
-    case 1: return TOMBSTONE_COLORS.outline
-    case 6: return TOMBSTONE_COLORS.body
-    case 7: return TOMBSTONE_COLORS.highlight
-    case 8: return TOMBSTONE_COLORS.dark
-    default: return 'transparent'
   }
 }
 
@@ -38,76 +28,55 @@ export function computeBobOffset(frame: number, amplitude: number): number {
   return Math.sin((frame / 30) * Math.PI * 2) * amplitude
 }
 
-// --- TOMBSTONE ---
+// --- TILE LAYER ---
 
-export function drawTombstone(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  scale: number,
-  dbName: string
-) {
-  // Draw tombstone pixel by pixel
-  for (let py = 0; py < 16; py++) {
-    for (let px = 0; px < 16; px++) {
-      const color = tombstoneColorMap(TOMBSTONE_SPRITE[py][px])
-      if (color === 'transparent') continue
-      ctx.fillStyle = color
-      ctx.fillRect(x + px * scale, y + py * scale, scale, scale)
+export function drawTileLayer(ctx: CanvasRenderingContext2D, mansion: MansionMap) {
+  for (let y = 0; y < mansion.height; y++) {
+    for (let x = 0; x < mansion.width; x++) {
+      const tile = mansion.tiles[y][x]
+      if (tile === TileType.Empty) continue
+      drawTile(ctx, tile, x * TILE_RENDERED, y * TILE_RENDERED, TILE_RENDERED)
     }
   }
-
-  // Engrave DB name on the tombstone (tiny pixel font)
-  ctx.fillStyle = TOMBSTONE_COLORS.engraving
-  ctx.font = `${Math.max(5 * (scale / 3), 7)}px monospace`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  // Draw name in the middle area of the tombstone (rows 5-8 area)
-  const textX = x + 8 * scale
-  const textY = y + 6.5 * scale
-  ctx.fillText(dbName, textX, textY, 14 * scale) // maxWidth to prevent overflow
 }
 
-// --- GHOST (updated with buried state and neon pulse) ---
+// --- GHOST ---
 
 export function drawGhost(
   ctx: CanvasRenderingContext2D,
   sprite: GhostSprite,
   globalFrame: number,
-  tombstoneY: number // y position of tombstone top for clipping buried ghosts
+  furnitureY: number
 ) {
   const frame = getGhostFrame(sprite.state, sprite.frame)
   const scale = SPRITE_SCALE * sprite.scale
 
-  // Compute bob offset based on state
   let bobOffset = 0
   if (sprite.state === 'active') {
-    bobOffset = computeBobOffset(globalFrame * 2, BOB_AMPLITUDE * 1.5) // bigger bob for active
+    bobOffset = computeBobOffset(globalFrame * 2, BOB_AMPLITUDE * 1.5)
   } else if (sprite.state === 'idle') {
     bobOffset = computeBobOffset(globalFrame, BOB_AMPLITUDE)
   } else if (sprite.state === 'distressed') {
     bobOffset = (globalFrame % 2 === 0 ? 2 : -2)
   }
-  // sleeping: no bob offset, ghost is buried
 
   const drawX = sprite.x
   let drawY = sprite.y + bobOffset
 
-  // For sleeping/buried ghosts: position them lower, behind the tombstone
+  // Sleeping ghosts sink behind their furniture
   const isBuried = sprite.state === 'sleeping'
   if (isBuried) {
-    drawY = tombstoneY - 3 * scale // only top portion visible above tombstone
+    drawY = furnitureY - 3 * scale
   }
 
-  // Draw neon pulse glow for active ghosts
+  // Neon pulse glow for active ghosts
   if (sprite.state === 'active' && sprite.glowIntensity > 0) {
-    const pulsePhase = Math.sin(globalFrame * 0.15) * 0.5 + 0.5 // 0-1 oscillation
-    const glowRadius = (50 + pulsePhase * 20) * sprite.scale * sprite.glowIntensity
+    const pulsePhase = Math.sin(globalFrame * 0.15) * 0.5 + 0.5
+    const glowRadius = (25 + pulsePhase * 10) * sprite.scale * sprite.glowIntensity
     const gradient = ctx.createRadialGradient(
       drawX + (8 * scale), drawY + (8 * scale), 0,
       drawX + (8 * scale), drawY + (8 * scale), glowRadius
     )
-    // Neon green/purple color cycle
     const neonHue = (globalFrame * 2) % 360
     const neonColor = neonHue < 180 ? '#a8ff78' : '#b388ff'
     gradient.addColorStop(0, neonColor + '55')
@@ -116,7 +85,7 @@ export function drawGhost(
     ctx.fillStyle = gradient
     ctx.fillRect(drawX - glowRadius, drawY - glowRadius, 16 * scale + glowRadius * 2, 16 * scale + glowRadius * 2)
   } else if (sprite.state === 'distressed' && sprite.glowIntensity > 0) {
-    const glowRadius = 40 * sprite.scale * sprite.glowIntensity
+    const glowRadius = 20 * sprite.scale * sprite.glowIntensity
     const gradient = ctx.createRadialGradient(
       drawX + (8 * scale), drawY + (8 * scale), 0,
       drawX + (8 * scale), drawY + (8 * scale), glowRadius
@@ -127,18 +96,16 @@ export function drawGhost(
     ctx.fillRect(drawX - glowRadius, drawY - glowRadius, 16 * scale + glowRadius * 2, 16 * scale + glowRadius * 2)
   }
 
-  // Determine body color
   let bodyColor: string = COLORS.ghostDefault
   if (sprite.state === 'sleeping') bodyColor = COLORS.ghostSleeping
   if (sprite.state === 'distressed') bodyColor = COLORS.ghostDistressed
   if (sprite.state === 'active') bodyColor = mixColor(COLORS.ghostDefault, COLORS.ghostGlow, sprite.glowIntensity)
 
-  // For buried ghosts: use canvas clipping to only show top portion
+  // Clip buried ghosts behind furniture
   if (isBuried) {
     ctx.save()
     ctx.beginPath()
-    // Clip region: everything above the tombstone top + a few pixels into it
-    ctx.rect(drawX - 10, drawY - 10, 16 * scale + 20, tombstoneY - drawY + 4 * (scale / SPRITE_SCALE))
+    ctx.rect(drawX - 10, drawY - 10, 16 * scale + 20, furnitureY - drawY + 4 * (scale / SPRITE_SCALE))
     ctx.clip()
   }
 
@@ -148,7 +115,7 @@ export function drawGhost(
       const color = spriteColorMap(frame[y][x], bodyColor)
       if (color === 'transparent') continue
       ctx.fillStyle = color
-      ctx.globalAlpha = isBuried ? 0.6 : 1 // buried ghosts are slightly transparent
+      ctx.globalAlpha = isBuried ? 0.6 : 1
       ctx.fillRect(drawX + x * scale, drawY + y * scale, scale, scale)
     }
   }
@@ -158,23 +125,22 @@ export function drawGhost(
     ctx.restore()
   }
 
-  // Draw name above ghost (only for non-buried — buried name is on tombstone)
+  // Name above ghost (always visible, white with glow)
   if (!isBuried) {
-    ctx.fillStyle = COLORS.textPrimary
-    ctx.font = `${10 * sprite.scale}px monospace`
+    const nameCx = drawX + 8 * scale
+    const nameY = drawY - 24
+    ctx.save()
+    ctx.font = `bold ${18 * sprite.scale}px monospace`
     ctx.textAlign = 'center'
-    ctx.fillText(sprite.ghost.name, drawX + 8 * scale, drawY - 12)
-  }
-
-  // Draw table count badge (only for non-buried with stats)
-  if (!isBuried && sprite.ghost.stats) {
-    const badgeText = `${sprite.ghost.stats.tableCount} tables`
-    ctx.fillStyle = COLORS.badgeBg
-    ctx.font = '10px monospace'
-    const textWidth = ctx.measureText(badgeText).width
-    ctx.fillRect(drawX + 8 * scale - textWidth / 2 - 4, drawY + 17 * scale, textWidth + 8, 14)
-    ctx.fillStyle = COLORS.textSecondary
-    ctx.fillText(badgeText, drawX + 8 * scale, drawY + 17 * scale + 11)
+    // Glow effect
+    ctx.shadowColor = '#ffffff'
+    ctx.shadowBlur = 8
+    ctx.fillStyle = '#ffffff'
+    ctx.fillText(sprite.ghost.name, nameCx, nameY)
+    // Second pass for crisp text
+    ctx.shadowBlur = 0
+    ctx.fillText(sprite.ghost.name, nameCx, nameY)
+    ctx.restore()
   }
 }
 
@@ -196,157 +162,122 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   return { r: parseInt(match[1], 16), g: parseInt(match[2], 16), b: parseInt(match[3], 16) }
 }
 
-// --- ROOM ---
+// --- MANSION FOG (3-LAYER PARALLAX) ---
 
-export function drawRoom(ctx: CanvasRenderingContext2D, roomIndex: number) {
-  const col = roomIndex % ROOMS_PER_ROW
-  const row = Math.floor(roomIndex / ROOMS_PER_ROW)
-  const x = col * (ROOM_WIDTH + ROOM_PADDING) + ROOM_PADDING
-  const y = row * (ROOM_HEIGHT + ROOM_PADDING) + ROOM_PADDING
-
-  // Floor
-  ctx.fillStyle = COLORS.roomFloor
-  ctx.fillRect(x, y, ROOM_WIDTH, ROOM_HEIGHT)
-
-  // Walls
-  ctx.strokeStyle = COLORS.wallTrim
-  ctx.lineWidth = 2
-  ctx.strokeRect(x, y, ROOM_WIDTH, ROOM_HEIGHT)
-
-  // Wall top trim
-  ctx.fillStyle = COLORS.roomWall
-  ctx.fillRect(x, y, ROOM_WIDTH, 20)
-
-  // Candles on wall trim
-  drawCandle(ctx, x + 15, y + 6)
-  drawCandle(ctx, x + ROOM_WIDTH - 25, y + 6)
-
-  return { x, y, centerX: x + ROOM_WIDTH / 2, centerY: y + ROOM_HEIGHT / 2 }
+interface FogCloud {
+  x: number
+  y: number
+  width: number
+  speed: number
 }
 
-function drawCandle(ctx: CanvasRenderingContext2D, x: number, y: number) {
-  ctx.fillStyle = '#dfe6e9'
-  ctx.fillRect(x, y + 4, 4, 8)
-
-  const flicker = Math.random() * 2 - 1
-  ctx.fillStyle = COLORS.candleFlame
-  ctx.fillRect(x + flicker, y, 4, 4)
-
-  const gradient = ctx.createRadialGradient(x + 2, y + 2, 0, x + 2, y + 2, 20)
-  gradient.addColorStop(0, 'rgba(255, 170, 51, 0.2)')
-  gradient.addColorStop(1, 'transparent')
-  ctx.fillStyle = gradient
-  ctx.fillRect(x - 18, y - 18, 40, 40)
+interface FogLayer {
+  clouds: FogCloud[]
+  opacity: number
+  color: string
+  yScale: number // vertical squash of ellipse
 }
 
-// --- FOG ---
+const fogLayers: FogLayer[] = []
+let fogInitialized = false
 
-// Persistent fog cloud positions (seeded per room)
-const fogClouds: Map<number, Array<{ x: number; y: number; width: number; speed: number }>> = new Map()
+function initFogLayers(mapWidthPx: number, mapHeightPx: number) {
+  if (fogInitialized) return
+  fogInitialized = true
 
-function getFogClouds(roomIndex: number, roomX: number, roomY: number) {
-  if (!fogClouds.has(roomIndex)) {
-    const clouds = []
-    for (let i = 0; i < FOG_CLOUD_COUNT; i++) {
+  const layerConfigs = [
+    // Back layer: large, slow, dim — deep atmospheric haze
+    { count: Math.max(4, Math.floor(mapWidthPx / 200)), speedMul: 0.15, widthMin: 80, widthMax: 160, opacity: 0.04, color: '#6a7a8a', yScale: 14 },
+    // Mid layer: medium, normal speed
+    { count: Math.max(5, Math.floor(mapWidthPx / 120)), speedMul: 0.35, widthMin: 50, widthMax: 100, opacity: 0.06, color: '#8a9aaa', yScale: 10 },
+    // Front layer: small, fast, brighter — wisps
+    { count: Math.max(6, Math.floor(mapWidthPx / 80)), speedMul: 0.7, widthMin: 30, widthMax: 70, opacity: 0.05, color: '#c8d6e5', yScale: 7 },
+  ]
+
+  for (const cfg of layerConfigs) {
+    const clouds: FogCloud[] = []
+    for (let i = 0; i < cfg.count; i++) {
       clouds.push({
-        x: Math.random() * ROOM_WIDTH,
-        y: roomY + ROOM_HEIGHT * 0.7 + Math.random() * ROOM_HEIGHT * 0.25,
-        width: 40 + Math.random() * 60,
-        speed: FOG_SPEED * (0.5 + Math.random()),
+        x: Math.random() * mapWidthPx,
+        y: mapHeightPx * 0.35 + Math.random() * mapHeightPx * 0.55,
+        width: cfg.widthMin + Math.random() * (cfg.widthMax - cfg.widthMin),
+        speed: FOG_SPEED * cfg.speedMul * (0.5 + Math.random() * 0.5),
       })
     }
-    fogClouds.set(roomIndex, clouds)
-  }
-  return fogClouds.get(roomIndex)!
-}
-
-export function drawFog(ctx: CanvasRenderingContext2D, roomIndex: number, roomX: number, roomY: number, globalFrame: number) {
-  const clouds = getFogClouds(roomIndex, roomX, roomY)
-
-  for (const cloud of clouds) {
-    // Drift clouds
-    cloud.x += cloud.speed
-    if (cloud.x > roomX + ROOM_WIDTH + cloud.width) {
-      cloud.x = roomX - cloud.width
-    }
-
-    // Draw soft cloud ellipse
-    ctx.save()
-    ctx.globalAlpha = FOG_OPACITY + Math.sin(globalFrame * 0.02 + cloud.x * 0.01) * 0.03
-    ctx.beginPath()
-    const cx = cloud.x
-    const cy = cloud.y
-    ctx.ellipse(cx, cy, cloud.width / 2, 8, 0, 0, Math.PI * 2)
-    ctx.fillStyle = '#c8d6e5'
-    ctx.fill()
-    ctx.restore()
+    fogLayers.push({ clouds, opacity: cfg.opacity, color: cfg.color, yScale: cfg.yScale })
   }
 }
 
-// --- COBWEBS ---
+export function drawMansionFog(ctx: CanvasRenderingContext2D, mapWidthPx: number, mapHeightPx: number, globalFrame: number) {
+  initFogLayers(mapWidthPx, mapHeightPx)
 
-export function drawCobwebs(ctx: CanvasRenderingContext2D, roomX: number, roomY: number) {
-  const cobwebScale = 2.5
-  const webColor = 'rgba(200, 214, 229, 0.25)'
-
-  // Top-left cobweb
-  for (let py = 0; py < 16; py++) {
-    for (let px = 0; px < 16; px++) {
-      if (COBWEB_SPRITE[py][px] === 9) {
-        ctx.fillStyle = webColor
-        ctx.fillRect(roomX + px * cobwebScale, roomY + py * cobwebScale, cobwebScale, cobwebScale)
+  for (const layer of fogLayers) {
+    for (const cloud of layer.clouds) {
+      cloud.x += cloud.speed
+      if (cloud.x > mapWidthPx + cloud.width) {
+        cloud.x = -cloud.width
       }
-    }
-  }
 
-  // Top-right cobweb (mirror horizontally)
-  for (let py = 0; py < 16; py++) {
-    for (let px = 0; px < 16; px++) {
-      if (COBWEB_SPRITE[py][15 - px] === 9) {
-        ctx.fillStyle = webColor
-        ctx.fillRect(roomX + ROOM_WIDTH - 16 * cobwebScale + px * cobwebScale, roomY + py * cobwebScale, cobwebScale, cobwebScale)
-      }
+      ctx.save()
+      ctx.globalAlpha = layer.opacity + Math.sin(globalFrame * 0.02 + cloud.x * 0.01) * 0.02
+      ctx.beginPath()
+      ctx.ellipse(cloud.x, cloud.y, cloud.width / 2, layer.yScale, 0, 0, Math.PI * 2)
+      ctx.fillStyle = layer.color
+      ctx.fill()
+      ctx.restore()
     }
   }
 }
 
-// --- DUST MOTES ---
+// --- VIGNETTE ---
 
-const dustMotes: Map<number, Array<{ x: number; y: number; opacity: number; driftX: number; speed: number }>> = new Map()
-
-function getDustMotes(roomIndex: number, roomX: number, roomY: number) {
-  if (!dustMotes.has(roomIndex)) {
-    const motes = []
-    for (let i = 0; i < DUST_MOTE_COUNT; i++) {
-      motes.push({
-        x: roomX + Math.random() * ROOM_WIDTH,
-        y: roomY + 20 + Math.random() * (ROOM_HEIGHT - 40),
-        opacity: DUST_OPACITY_MIN + Math.random() * (DUST_OPACITY_MAX - DUST_OPACITY_MIN),
-        driftX: (Math.random() - 0.5) * 0.3,
-        speed: 0.1 + Math.random() * 0.2,
-      })
-    }
-    dustMotes.set(roomIndex, motes)
-  }
-  return dustMotes.get(roomIndex)!
+export function drawVignette(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const cx = w / 2
+  const cy = h / 2
+  const outerRadius = Math.max(w, h) * 0.7
+  const gradient = ctx.createRadialGradient(cx, cy, outerRadius * 0.3, cx, cy, outerRadius)
+  gradient.addColorStop(0, 'rgba(0,0,0,0)')
+  gradient.addColorStop(0.8, 'rgba(0,0,0,0.05)')
+  gradient.addColorStop(1, 'rgba(0,0,0,0.15)')
+  ctx.save()
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, w, h)
+  ctx.restore()
 }
 
-export function drawDustMotes(ctx: CanvasRenderingContext2D, roomIndex: number, roomX: number, roomY: number, globalFrame: number) {
-  const motes = getDustMotes(roomIndex, roomX, roomY)
+// --- DUST MOTES (mansion-wide) ---
 
-  for (const mote of motes) {
-    // Float upward and drift
+const mansionDust: Array<{ x: number; y: number; opacity: number; driftX: number; speed: number }> = []
+let dustInitialized = false
+
+function initMansionDust(mapWidthPx: number, mapHeightPx: number) {
+  if (dustInitialized) return
+  dustInitialized = true
+  const count = Math.max(DUST_MOTE_COUNT, Math.floor(mapWidthPx * mapHeightPx / 8000))
+  for (let i = 0; i < count; i++) {
+    mansionDust.push({
+      x: Math.random() * mapWidthPx,
+      y: Math.random() * mapHeightPx,
+      opacity: DUST_OPACITY_MIN + Math.random() * (DUST_OPACITY_MAX - DUST_OPACITY_MIN),
+      driftX: (Math.random() - 0.5) * 0.3,
+      speed: 0.1 + Math.random() * 0.2,
+    })
+  }
+}
+
+export function drawMansionDust(ctx: CanvasRenderingContext2D, mapWidthPx: number, mapHeightPx: number, globalFrame: number) {
+  initMansionDust(mapWidthPx, mapHeightPx)
+
+  for (const mote of mansionDust) {
     mote.y -= mote.speed
     mote.x += mote.driftX + Math.sin(globalFrame * 0.05 + mote.x) * 0.1
 
-    // Reset when reaching top
-    if (mote.y < roomY + 20) {
-      mote.y = roomY + ROOM_HEIGHT - 10
-      mote.x = roomX + Math.random() * ROOM_WIDTH
+    if (mote.y < 0) {
+      mote.y = mapHeightPx
+      mote.x = Math.random() * mapWidthPx
     }
-    // Wrap horizontally
-    if (mote.x < roomX) mote.x = roomX + ROOM_WIDTH
-    if (mote.x > roomX + ROOM_WIDTH) mote.x = roomX
+    if (mote.x < 0) mote.x = mapWidthPx
+    if (mote.x > mapWidthPx) mote.x = 0
 
     ctx.fillStyle = '#ffffff'
     ctx.globalAlpha = mote.opacity * (0.5 + Math.sin(globalFrame * 0.03 + mote.x) * 0.5)
@@ -358,12 +289,8 @@ export function drawDustMotes(ctx: CanvasRenderingContext2D, roomIndex: number, 
 // --- FLICKER ---
 
 export function applyFlicker(ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number, globalFrame: number) {
-  // Slow sine wave for ambient flicker
   const flickerBase = Math.sin(globalFrame * FLICKER_SPEED) * FLICKER_AMOUNT
-
-  // Occasional quick dip (dying candle effect)
   const quickFlicker = (globalFrame % 120 < 3) ? 0.08 : 0
-
   const darkness = Math.max(0, flickerBase + quickFlicker)
 
   if (darkness > 0) {
@@ -372,7 +299,7 @@ export function applyFlicker(ctx: CanvasRenderingContext2D, canvasWidth: number,
   }
 }
 
-// --- PARTICLES (updated) ---
+// --- PARTICLES ---
 
 export function drawParticles(
   ctx: CanvasRenderingContext2D,
@@ -384,7 +311,6 @@ export function drawParticles(
   const cy = sprite.y
 
   if (sprite.state === 'sleeping') {
-    // Zzz particles floating up from behind tombstone
     const zOffset = (globalFrame % 60) / 60
     ctx.fillStyle = COLORS.textSecondary
     ctx.font = `${12 + zOffset * 8}px monospace`
@@ -397,12 +323,11 @@ export function drawParticles(
   }
 
   if (sprite.state === 'active') {
-    // Orbiting neon sparkles
     for (let i = 0; i < 5; i++) {
       const angle = ((globalFrame * 3 + i * 72) % 360) * (Math.PI / 180)
-      const radius = (35 + Math.sin(globalFrame * 0.1 + i) * 8) * sprite.scale
+      const radius = (18 + Math.sin(globalFrame * 0.1 + i) * 4) * sprite.scale
       const px = cx + Math.cos(angle) * radius
-      const py = cy + 32 * sprite.scale + Math.sin(angle) * radius * 0.6 // slightly elliptical
+      const py = cy + 16 * sprite.scale + Math.sin(angle) * radius * 0.6
       const neonColor = i % 2 === 0 ? COLORS.ghostGlow : '#b388ff'
       ctx.fillStyle = neonColor
       ctx.globalAlpha = 0.5 + Math.sin(globalFrame * 0.2 + i) * 0.5
@@ -412,7 +337,6 @@ export function drawParticles(
   }
 
   if (sprite.state === 'distressed') {
-    // Sweat drops
     const dropY = cy + 8 + (globalFrame % 20)
     ctx.fillStyle = '#74b9ff'
     ctx.globalAlpha = 1 - (globalFrame % 20) / 20
@@ -420,4 +344,14 @@ export function drawParticles(
     ctx.fillRect(cx - 12, dropY + 5, 3, 5)
     ctx.globalAlpha = 1
   }
+}
+
+/**
+ * Reset fog/dust state (for hot-reload or tests).
+ */
+export function resetAmbientState() {
+  fogLayers.length = 0
+  fogInitialized = false
+  mansionDust.length = 0
+  dustInitialized = false
 }
